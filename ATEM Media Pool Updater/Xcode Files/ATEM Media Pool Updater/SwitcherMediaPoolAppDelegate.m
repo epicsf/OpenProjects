@@ -22,7 +22,7 @@ NSString* path = [NSHomeDirectory() stringByAppendingPathComponent:@"ATEMUpdater
     if (switchers == nil) {
         [settings setObject:@[] forKey:@"switchers"];
     }
-    NSDictionary* stdValues = @{@"auto": @false, @"status": @"Idle", @"connected":@false, @"enabled": @true};
+    NSDictionary* stdValues = @{@"auto": @false, @"startupauto": @false, @"status": @"Idle", @"connected":@false, @"enabled": @true};
     
     for (NSDictionary* el in [settings objectForKey:@"switchers"]) {
         for (NSString* key in stdValues) {
@@ -102,6 +102,7 @@ NSString* path = [NSHomeDirectory() stringByAppendingPathComponent:@"ATEMUpdater
                             } else {
                                 NSLog(@"No local stills exist for %@. Disabling auto-update", ip);
                                 [self setParameter:@false withKey:@"auto" forIP:ip];
+                                [self setParameter:@false withKey:@"startupauto" forIP:ip];
                             }
                         }
 
@@ -177,6 +178,8 @@ NSString* path = [NSHomeDirectory() stringByAppendingPathComponent:@"ATEMUpdater
         return [element objectForKey:@"ip"];
     } else if([identifier isEqualToString:@"automode"]) {
         return [element objectForKey:@"auto"];
+    } else if([identifier isEqualToString:@"startupautomode"]) {
+        return [element objectForKey:@"startupauto"];
     } else if([identifier isEqualToString:@"status"]) {
         if ([[element objectForKey:@"enabled"] isEqual: @true]) {
             return [element objectForKey:@"status"];
@@ -213,6 +216,8 @@ NSString* path = [NSHomeDirectory() stringByAppendingPathComponent:@"ATEMUpdater
             }
         }
         [self setParameter:object withKey:@"auto" forIP:[element objectForKey:@"ip"]];
+    } else if([identifier isEqualToString:@"startupautomode"]) {
+        [self setParameter:object withKey:@"startupauto" forIP:[element objectForKey:@"ip"]];
     } else if([identifier isEqualToString:@"push"]) {
         if (![mw isBusy] && [mw isConnected]) {
             [mw pushStills];
@@ -338,7 +343,7 @@ NSString* path = [NSHomeDirectory() stringByAppendingPathComponent:@"ATEMUpdater
         NSBeginAlertSheet(@"A switcher instance with this address is already registered.", @"OK", nil, nil, _window, nil, nil, nil, nil, @"");
     } else {
         NSMutableArray* copy = [[settings objectForKey:@"switchers"] mutableCopy];
-        [copy addObject:@{@"ip":ip, @"auto": @false, @"status": @"Idle", @"connected":@false, @"enabled": @true}];
+        [copy addObject:@{@"ip":ip, @"auto": @false, @"startupauto": @false, @"status": @"Idle", @"connected":@false, @"enabled": @true}];
         [settings setObject:copy forKey:@"switchers"];
         [settings synchronize];
         [[self tableView] reloadData];
