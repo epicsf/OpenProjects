@@ -60,6 +60,39 @@
     [self updateNextStill];
 }
 
+-(void) pullClip1 {
+    NSFileManager *fm = [[NSFileManager alloc] init];
+    JSONData = [[NSMutableDictionary alloc] init];
+    [self updateJSON];
+    
+    NSLog(@"Deleting existing clip 1..");
+    NSString* clip1Path;
+    uint32_t frameCount;
+    clip1->GetFrameCount(&frameCount);
+    for(int i = 0; i<frameCount; i++) {
+        clip1Path = [_mPath stringByAppendingPathComponent:[NSString stringWithFormat:@"CLIP1_%d", i]];
+        [fm removeItemAtPath:clip1Path error:nil];
+    }
+    
+    NSLog(@"Pulling clip 1 from switcher..");
+    for (int i = 0; i<frameCount; i++) {
+        BMDSwitcherHash hash;
+        clip1->GetFrameHash(i, &hash);
+        if ([[self hexHash:hash.data] isEqualToString:@"00000000000000000000000000000000"]) {
+            continue;
+        }
+        CFStringRef name = (__bridge CFStringRef) @"";
+        clip1->GetName(&name);
+        [clip1UpdateList addObject:@{
+                                @"index": [NSNumber numberWithInt:i],
+                                @"reason":@"NOT_IN_JSON",
+                                @"hash": [self hexHash:hash.data],
+                                @"title": [NSString stringWithFormat:@"%@_%i", (__bridge NSString*) name, i]
+                                }];
+    }
+    [self updateNextClip1Frame];
+}
+
 -(bool) localStillsExist {
     NSFileManager *fm = [[NSFileManager alloc] init];
     NSString* localPath;
@@ -95,6 +128,31 @@
         }
     }
     [self updateNextStill];
+}
+
+-(void) pushClip1 {
+    NSFileManager *fm = [[NSFileManager alloc] init];
+    NSString* clip1Path;
+    
+    //mediaPool->Clear();
+    
+    NSLog(@"Pushing clip 1 to switcher..");
+    for (int i = 0; i<clipsFrameTotal; i++) {
+        clip1Path = [_mPath stringByAppendingPathComponent:[NSString stringWithFormat:@"CLIP1_%d", i]];
+        if ([fm fileExistsAtPath:clip1Path]) {
+            BMDSwitcherHash hash;
+            clip1->GetFrameHash(i, &hash);
+            CFStringRef name = (__bridge CFStringRef) @"";
+            clip1->GetName(&name);
+            [clip1UpdateList addObject:@{
+                                    @"index": [NSNumber numberWithInt:i],
+                                    @"reason":@"HASH_MISMATCH",
+                                    @"hash": [self hexHash:hash.data],
+                                    @"title": [NSString stringWithFormat:@"%@_%i", (__bridge NSString*) name, i]
+                                    }];
+        }
+    }
+    [self updateNextClip1Frame];
 }
 
 -(bool) stillsAreValid {
@@ -198,12 +256,19 @@
 
             hr = switcher->QueryInterface(mediaPollIID, (void**)&mediaPool);
             mediaPool->GetStills(&stills);
+            mediaPool->GetClip(0, &clip1);
+            mediaPool->GetClip(1, &clip2);
+            mediaPool->GetClipCount(&clipsCount);
 
             stills->GetCount(&stillsCount);
+            
+            
 
             
 
             stillsMonitor->setStills(stills);
+            clip1Monitor->setClip(clip1);
+            clip2Monitor->setClip(clip2);
             switcherMonitor->setSwitcher(switcher);
             
             [mUIDelegate performSelectorOnMainThread:@selector(switcherConnectionEstablished:) withObject:_mIP waitUntilDone:NO];
@@ -229,7 +294,17 @@
 -(void) cleanupConnection {
     switcherMonitor->setSwitcher(NULL);
     stillsMonitor->setStills(NULL);
+    clip1Monitor->setClip(NULL);
+    clip2Monitor->setClip(NULL);
     
+    if(clip1) {
+        clip1->Release();
+        clip1 = NULL;
+    }
+    if (clip2) {
+        clip2->Release();
+        clip2 = NULL;
+    }
     if(stills) {
         stills->Release();
         stills = NULL;
@@ -282,6 +357,8 @@
         JSONData = [[NSMutableDictionary alloc] init];
     }
     
+    clip1Monitor = new ClipMonitor(self);
+    clip2Monitor = new ClipMonitor(self);
     stillsMonitor = new StillsMonitor(self);
     switcherMonitor = new SwitcherMonitor(self);
     lockCallback = new LockCallback(self);
@@ -312,6 +389,33 @@
         [mUIDelegate performSelectorOnMainThread:@selector(setStatusMsg:) withObject:@{@"ip":_mIP, @"status":statusStr} waitUntilDone:NO];
         currentIndex = [[element objectForKey:@"index"] integerValue];
         stills->Lock(lockCallback);
+    } else {
+        [mUIDelegate performSelectorOnMainThread:@selector(switcherActionCompleted:) withObject:_mIP waitUntilDone:NO];
+    }
+}
+
+-(void) updateNextClip1Frame {
+    if (terminating) {
+        return;
+    }
+    
+    if ([clip1UpdateList count] > 0) {
+        NSDictionary* element = [clip1UpdateList firstObject];
+        
+        //NSLog(@"Updating object %@ for reason %@", [element objectForKey:@"index"], [element objectForKey:@"reason"]);
+        
+        if (![[element objectForKey:@"reason"] isEqualToString:@"HASH_MISMATCH"]) {
+            downloadPath = [_mPath stringByAppendingPathComponent:[NSString stringWithFormat:@"CLIP1_%@", [element objectForKey:@"index"]]];
+        }
+        NSString *statusStr;
+        if (downloadPath==nil) {
+            statusStr = [NSString stringWithFormat:@"Uploading clip 1 frame %@", [element objectForKey:@"index"]];
+        } else {
+            statusStr = [NSString stringWithFormat:@"Downloading clip 1 frame %@", [element objectForKey:@"index"]];
+        }
+        [mUIDelegate performSelectorOnMainThread:@selector(setStatusMsg:) withObject:@{@"ip":_mIP, @"status":statusStr} waitUntilDone:NO];
+        currentIndex = [[element objectForKey:@"index"] integerValue];
+        clip1->Lock(lockCallback);
     } else {
         [mUIDelegate performSelectorOnMainThread:@selector(switcherActionCompleted:) withObject:_mIP waitUntilDone:NO];
     }

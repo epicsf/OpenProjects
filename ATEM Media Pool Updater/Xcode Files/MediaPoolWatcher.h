@@ -21,22 +21,29 @@
     IBMDSwitcher* switcher;
     IBMDSwitcherMediaPool* mediaPool;
     IBMDSwitcherStills* stills;
+    IBMDSwitcherClip* clip1;
+    IBMDSwitcherClip* clip2;
     SwitcherMonitor* switcherMonitor;
     StillsMonitor* stillsMonitor;
+    ClipMonitor* clip1Monitor;
+    ClipMonitor* clip2Monitor;
     
-    SwitcherMonitor* monitor;
     LockCallback* lockCallback;
     
     NSString* downloadPath;
     
     uint32_t currentIndex;
     uint32_t stillsCount;
+    uint32_t clipsCount;
+    uint32_t clipsFrameTotal;
     
     NSString* JSONFile;
     
     NSMutableDictionary* JSONData;
     
     NSMutableArray* updateList;
+    NSMutableArray* clip1UpdateList;
+    NSMutableArray* clip2UpdateList;
     
     SwitcherMediaPoolAppDelegate* mUIDelegate;
     
@@ -52,7 +59,11 @@
 -(void) onStillsTransferEnded: (NSDictionary*) data;
 -(void) switcherDisconnected;
 -(void) pullStills;
+-(void) pullClip1;
+-(void) pullClip2;
 -(void) pushStills;
+-(void) pushClip1;
+-(void) pushClip2;
 -(void) connectToSwitcher;
 -(void) isTerminating;
 -(bool) isBusy;

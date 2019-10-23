@@ -216,6 +216,7 @@ NSString* path = [NSHomeDirectory() stringByAppendingPathComponent:@"ATEMUpdater
     } else if([identifier isEqualToString:@"push"]) {
         if (![mw isBusy] && [mw isConnected]) {
             [mw pushStills];
+            [mw pushClip1];
         }
     } else if([identifier isEqualToString:@"pull"]) {
         // User trying to pull when there are existing local stills. Double-check they meant to do that.
@@ -228,7 +229,8 @@ NSString* path = [NSHomeDirectory() stringByAppendingPathComponent:@"ATEMUpdater
             [alert beginSheetModalForWindow:self.window completionHandler:^(NSModalResponse returnCode) {
                 if (returnCode == NSAlertAlternateReturn) {
                     if (![mw isBusy] && [mw isConnected]) {
-                        [mw pullStills];
+                        //[mw pullStills];
+                        [mw pullClip1];
                     }
                 } else {
                     return;
@@ -237,6 +239,7 @@ NSString* path = [NSHomeDirectory() stringByAppendingPathComponent:@"ATEMUpdater
         } else {
             if (![mw isBusy] && [mw isConnected]) {
                 [mw pullStills];
+                [mw pullClip1];
             }
         }
     } else if([identifier isEqualToString:@"repair"]) {
