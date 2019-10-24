@@ -22,6 +22,7 @@ class SwitcherMonitor;
     IBMDSwitcherStills* stills;
     SwitcherMonitor* switcherMonitor;
     StillsMonitor* stillsMonitor;
+    ClipMonitor* clipMonitor;
     
     std::vector<IBMDSwitcherClip*> clips;
     

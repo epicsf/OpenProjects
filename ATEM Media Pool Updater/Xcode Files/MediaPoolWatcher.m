@@ -33,14 +33,22 @@
     NSFileManager *fm = [[NSFileManager alloc] init];
     JSONData = [[NSMutableDictionary alloc] init];
     [self updateJSON];
-    
+
+    // TODO: support multiple clips
+    uint32_t frameCount;
+    clip->GetFrameCount(&frameCount);
+
     NSLog(@"Deleting existing local stills..");
     NSString* stillPath;
     for(int i = 0; i<stillsCount; i++) {
         stillPath = [_mPath stringByAppendingPathComponent:[NSString stringWithFormat:@"IMAGE_%d", i]];
         [fm removeItemAtPath:stillPath error:nil];
     }
-    
+    for (int i = 0; i < clipsCount; i++) {
+        stillPath = [_mPath stringByAppendingPathComponent:[NSString stringWithFormat:@"CLIP_%d", i]];
+        [fm removeItemAtPath:stillPath error:nil];
+    }
+
     NSLog(@"Pulling stills from switcher..");
     for (int i = 0; i<stillsCount; i++) {
         BMDSwitcherHash hash;
@@ -58,6 +66,28 @@
                                     }];
     }
     [self updateNextStill];
+
+    // TODO: support multiple clips
+    for (int j = 0; j < frameCount; j++) {
+        BMDSwitcherHash hash;
+        clip->GetFrameHash(j, &hash);
+        if ([[self hexHash:hash.data] isEqualToString:@"00000000000000000000000000000000"]) {
+            continue;
+        }
+
+        [updateQueue addOperationWithBlock:^{
+
+        }];
+
+        CFStringRef name = (__bridge CFStringRef) @"";
+        clip->GetName(&name);
+        [updateListClips addObject:@{
+            @"index": [NSNumber numberWithInt:j],
+            @"reason":@"NOT_IN_JSON",
+            @"hash": [self hexHash:hash.data],
+            @"title": (__bridge NSString*) name
+        }];
+    }
 }
 
 -(bool) localStillsExist {
@@ -65,6 +95,12 @@
     NSString* localPath;
     for (int i = 0; i<stillsCount; i++) {
         localPath = [_mPath stringByAppendingPathComponent:[NSString stringWithFormat:@"IMAGE_%d", i]];
+        if ([fm fileExistsAtPath:localPath]) {
+            return true;
+        }
+    }
+    for (int i = 0; i<clipsCount; i++) {
+        localPath = [_mPath stringByAppendingPathComponent:[NSString stringWithFormat:@"CLIP_%d", i]];
         if ([fm fileExistsAtPath:localPath]) {
             return true;
         }
@@ -197,13 +233,19 @@
             REFIID mediaPollIID = IID_IBMDSwitcherMediaPool;
 
             hr = switcher->QueryInterface(mediaPollIID, (void**)&mediaPool);
+
             mediaPool->GetStills(&stills);
-
             stills->GetCount(&stillsCount);
-
-            
-
             stillsMonitor->setStills(stills);
+
+            // mediaPool->GetClipCount(&clipsCount);
+            clipsCount = 1;
+            for (int i = 0; i < clipsCount; i++) {
+                // can a ClipMonitor monitor multiple clips? seems like no; we'll need to keep a collection of them eventually.
+                mediaPool->GetClip(i, &clip);
+                clipMonitor->setClip(clip);
+            }
+
             switcherMonitor->setSwitcher(switcher);
             
             [mUIDelegate performSelectorOnMainThread:@selector(switcherConnectionEstablished:) withObject:_mIP waitUntilDone:NO];
@@ -220,7 +262,7 @@
 }
 
 -(bool) isBusy {
-    if ([updateList count] > 0) {
+    if ([updateList count] > 0 || [updateQueue operationCount] > 0) {
         return true;
     }
     return false;
@@ -229,6 +271,7 @@
 -(void) cleanupConnection {
     switcherMonitor->setSwitcher(NULL);
     stillsMonitor->setStills(NULL);
+    clipMonitor->setClip(NULL);
     
     if(stills) {
         stills->Release();
@@ -255,6 +298,7 @@
     connected = false;
     terminating = false;
     updateList = [[NSMutableArray alloc] init];
+    updateQueue = [NSOperationQueue new];
     downloadPath = nil;
     
     _mIP = ip;
@@ -283,8 +327,10 @@
     }
     
     stillsMonitor = new StillsMonitor(self);
+    clipMonitor = new ClipMonitor(self);
     switcherMonitor = new SwitcherMonitor(self);
-    lockCallback = new LockCallback(self);
+    lockCallbackStills = new LockCallback(self);
+    lockCallbackClips = new LockCallback(self, 0); // TODO: support more than one clip
     
     // Insert code here to initialize your application
     return self;
@@ -311,7 +357,32 @@
         }
         [mUIDelegate performSelectorOnMainThread:@selector(setStatusMsg:) withObject:@{@"ip":_mIP, @"status":statusStr} waitUntilDone:NO];
         currentIndex = [[element objectForKey:@"index"] integerValue];
-        stills->Lock(lockCallback);
+        stills->Lock(lockCallbackStills);
+    } else {
+        [mUIDelegate performSelectorOnMainThread:@selector(switcherActionCompleted:) withObject:_mIP waitUntilDone:NO];
+    }
+}
+
+-(void) updateNextClipFrame {
+    if (terminating) {
+        return;
+    }
+
+    if ([updateListClips count] > 0) {
+        NSDictionary* element = [updateListClips firstObject];
+
+        if (![[element objectForKey:@"reason"] isEqualToString:@"HASH_MISMATCH"]) {
+            downloadPath = [_mPath stringByAppendingPathComponent:[NSString stringWithFormat:@"CLIP_1_%@", [element objectForKey:@"index"]]];
+        }
+        NSString *statusStr;
+        if (downloadPath==nil) {
+            statusStr = [NSString stringWithFormat:@"Uploading clip frame %@", [element objectForKey:@"index"]];
+        } else {
+            statusStr = [NSString stringWithFormat:@"Downloading clip frame %@", [element objectForKey:@"index"]];
+        }
+        [mUIDelegate performSelectorOnMainThread:@selector(setStatusMsg:) withObject:@{@"ip":_mIP, @"status":statusStr} waitUntilDone:NO];
+        currentIndexClips = [[element objectForKey:@"index"] integerValue];
+        clip->Lock(lockCallbackClips);
     } else {
         [mUIDelegate performSelectorOnMainThread:@selector(switcherActionCompleted:) withObject:_mIP waitUntilDone:NO];
     }
@@ -363,7 +434,7 @@
                 if (FAILED(result)) {
                     NSLog(@"Upload failed!");
                     [updateList removeObjectAtIndex:0];
-                    stills->Unlock(lockCallback);
+                    stills->Unlock(lockCallbackStills);
                     [self updateNextStill];
                 }
     } else {
@@ -372,6 +443,63 @@
         stills->Download(currentIndex);
     }
 }
+
+-(void) onClipLockObtained:(NSNumber*)clipIndex {
+    NSDictionary* element = [updateListClips firstObject];
+    if ([[element objectForKey:@"reason"] isEqualToString:@"HASH_MISMATCH"]) {
+        NSDictionary* jsonObj = [JSONData objectForKey:[[element objectForKey:@"index"] stringValue]];
+
+        NSLog(@"Uploading clip frame %@ to %@", [element objectForKey:@"index"], _mIP);
+        NSData *frame = [NSData dataWithContentsOfFile:[_mPath stringByAppendingPathComponent:[NSString stringWithFormat:@"CLIP_1_%@", [element objectForKey:@"index"]]]];
+
+        NSUInteger frameSize = 0;
+        NSInteger width = [[jsonObj objectForKey:@"width"] integerValue];
+        NSInteger height = [[jsonObj objectForKey:@"height"] integerValue];
+        BMDSwitcherPixelFormat pixel_format;
+
+        if ([[jsonObj objectForKey:@"pixfmt"] isEqualToString:@"8BitYUV"]) {
+            frameSize = 2 * width * height;
+            pixel_format = bmdSwitcherPixelFormat8BitYUV;
+        } else if (![[jsonObj objectForKey:@"pixfmt"] isEqualToString:@""]) {
+            frameSize = 4 * width * height;
+            if ([[jsonObj objectForKey:@"pixfmt"] isEqualToString:@"10BitYUVA"]) {
+                pixel_format = bmdSwitcherPixelFormat10BitYUVA;
+            } else if ([[jsonObj objectForKey:@"pixfmt"] isEqualToString:@"8BitARGB"]) {
+                pixel_format = bmdSwitcherPixelFormat8BitARGB;
+            } else if ([[jsonObj objectForKey:@"pixfmt"] isEqualToString:@"8BitXRGB"]) {
+                pixel_format = bmdSwitcherPixelFormat8BitXRGB;
+            }
+        }
+
+        if (frameSize == 0) {
+            NSLog(@"Invalid frame size..");
+            return;
+        }
+
+        IBMDSwitcherFrame* newFrame = NULL;
+        mediaPool->CreateFrame(pixel_format, width, height, &newFrame);
+        void *frameData = NULL;
+        newFrame->GetBytes(&frameData);
+        [frame getBytes:frameData length:frameSize];
+
+        HRESULT result = stills->Upload([[element objectForKey:@"index"] integerValue], (__bridge CFStringRef)[jsonObj objectForKey:@"name"], newFrame);
+
+        newFrame->Release();
+        newFrame = NULL;
+        if (FAILED(result)) {
+            NSLog(@"Upload failed!");
+            [updateList removeObjectAtIndex:0];
+            stills->Unlock(lockCallbackStills);
+            [self updateNextStill];
+        }
+    } else {
+        NSLog(@"Stills lock obtained! Attempting Download of still %d from %@", currentIndex, _mIP);
+        setDownloading();
+        stills->Download(currentIndex);
+    }
+}
+
+
 -(void) onStillsTransferEnded:(FrameObject*)frm {
     NSDictionary* updateElement = [updateList firstObject];
     
@@ -422,7 +550,7 @@
     }
     downloadPath = nil;
     [updateList removeObjectAtIndex:0];
-    stills->Unlock(lockCallback);
+    stills->Unlock(lockCallbackStills);
     [self updateNextStill];
 }
 
